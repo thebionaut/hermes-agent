@@ -37,6 +37,15 @@ def extract_bearer(request: Request) -> str:
 def is_safe_next_path(path: str) -> bool:
     """Same-origin post-login target: rejects non-relative and protocol-relative (``//evil``)
     values, the auth routes themselves, and every ``/api`` path."""
+    # OBS-VULN-006: browsers fold ``\`` to ``/`` and drop tab/CR/LF while parsing, so ``/\evil.com``,
+    # ``/\t/evil.com`` and ``%5c`` variants become protocol-relative ``//evil.com`` off-origin targets.
+    # Judge the value the way a browser will read it.
+    from urllib.parse import unquote
+    for candidate in (path, unquote(path)):
+        if "\\" in candidate or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in candidate):
+            return False
+        if not candidate.startswith("/") or candidate.startswith("//"):
+            return False
     if not path.startswith("/") or path.startswith("//"):
         return False
     if any(path == p or path.startswith(p) for p in _NEXT_DENY_PREFIXES):

@@ -108,3 +108,44 @@ describe('hermes:fs:logsRoot', () => {
     }
   })
 })
+
+// OBS-DESKTOP: openDir mkdir()s and shell.openPath()s its argument, so it must be confined to the Hermes
+// data folder BEFORE either call. A compromised renderer must not create or launch arbitrary paths.
+describe('hermes:fs:openDir containment', () => {
+  const openDir = (target: string) => electron.handlers.get('hermes:fs:openDir')!({}, target) as Promise<{ ok: boolean; error?: string }>
+
+  it('creates and opens a folder inside the data folder', async () => {
+    const inside = path.join(scratch, 'desktop-plugins-test')
+
+    await expect(openDir(inside)).resolves.toEqual({ ok: true })
+    expect(fs.existsSync(inside)).toBe(true)
+  })
+
+  it('refuses a path outside the data folder without creating it', async () => {
+    const outside = path.join(os.tmpdir(), `hermes-openDir-escape-${process.pid}`)
+    const res = await openDir(outside)
+
+    expect(res.ok).toBe(false)
+    expect(fs.existsSync(outside)).toBe(false)
+  })
+
+  it('refuses ../ traversal out of the data folder', async () => {
+    const sneaky = path.join(scratch, '..', `hermes-openDir-traversal-${process.pid}`)
+    const res = await openDir(sneaky)
+
+    expect(res.ok).toBe(false)
+    expect(fs.existsSync(path.resolve(sneaky))).toBe(false)
+  })
+
+  it('refuses a symlink inside the data folder that points outside', async () => {
+    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-openDir-elsewhere-'))
+    const link = path.join(scratch, 'link-out')
+
+    fs.symlinkSync(elsewhere, link)
+
+    const res = await openDir(path.join(link, 'newdir'))
+
+    expect(res.ok).toBe(false)
+    expect(fs.existsSync(path.join(elsewhere, 'newdir'))).toBe(false)
+  })
+})

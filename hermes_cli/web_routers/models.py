@@ -9,7 +9,7 @@ import concurrent.futures
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from hermes_cli.web_deps import LateState, late
 from hermes_cli.web_server_config import (
@@ -27,6 +27,7 @@ router = APIRouter()
 # Late-bound so a test's monkeypatch on the owning module wins at call time.
 _config_profile_scope = late("_config_profile_scope", "hermes_cli.web_server_profiles")
 _profile_scope = late("_profile_scope", "hermes_cli.web_server_profiles")
+_request_is_authenticated = late("_request_is_authenticated")
 load_config = late("load_config", "hermes_cli.config")
 save_config = late("save_config", "hermes_cli.config")
 require_readable_config_before_write = late("require_readable_config_before_write", "hermes_cli.config")
@@ -88,10 +89,13 @@ def _bounded_context_length_probe(model: str, base_url: str, provider: str) -> i
 
 
 @router.get("/api/model/info")
-def get_model_info(profile: Optional[str] = None):
+def get_model_info(request: Request, profile: Optional[str] = None):
     """Resolved metadata for the configured model: auto-detected vs configured
     context length (so the UI can show "Auto-detected: 200K" beside the
     override) plus models.dev capabilities when available."""
+    # OBS-VULN-005: public route => an anonymous caller never enters a profile scope.
+    if profile and not _request_is_authenticated(request):
+        profile = None
     try:
         model_cfg = _load_config_scoped(profile).get("model", "")
         model_name, provider = _main_model_fields(model_cfg)

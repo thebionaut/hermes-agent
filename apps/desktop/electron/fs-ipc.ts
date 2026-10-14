@@ -28,6 +28,34 @@ export interface FsIpcDeps {
   resolveGitBinary: () => string
 }
 
+/** True when `target` is `home` or inside it, judged on real paths: the deepest EXISTING ancestor of
+ * `target` is realpath'd so a symlink under `home` that points elsewhere is rejected. */
+export function isInsideHermesHome(home: string, target: string): boolean {
+  const realOf = (p: string): string => {
+    let probe = path.resolve(p)
+    const tail: string[] = []
+
+    for (;;) {
+      try {
+        return path.join(fs.realpathSync(probe), ...tail.reverse())
+      } catch {
+        const parent = path.dirname(probe)
+
+        if (parent === probe) {
+          return path.resolve(p)
+        }
+
+        tail.push(path.basename(probe))
+        probe = parent
+      }
+    }
+  }
+
+  const rel = path.relative(realOf(home), realOf(target))
+
+  return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel))
+}
+
 export function registerFsIpc({
   hermesHome,
   readActiveDesktopProfile,
@@ -81,8 +109,17 @@ export function registerFsIpc({
     }
 
     try {
-      await fs.promises.mkdir(dir, { recursive: true })
-      const error = await shell.openPath(path.normalize(dir))
+      // OBS-DESKTOP: every legitimate caller opens a folder under the Hermes data folder (plugins
+      // root, logs, the data folder itself). Allow-list BEFORE mkdir/openPath so a compromised
+      // renderer cannot create arbitrary directories or launch arbitrary paths via the OS shell.
+      const target = path.resolve(expandUserPath(dir))
+
+      if (!isInsideHermesHome(hermesHome, target)) {
+        return { ok: false, error: 'path is outside the Hermes data folder' }
+      }
+
+      await fs.promises.mkdir(target, { recursive: true })
+      const error = await shell.openPath(target)
 
       return error ? { ok: false, error } : { ok: true }
     } catch (error) {

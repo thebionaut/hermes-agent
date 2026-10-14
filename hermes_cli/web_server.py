@@ -516,6 +516,18 @@ def _require_token(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+def _request_is_authenticated(request: Request) -> bool:
+    """Non-raising twin of :func:`_require_token` for handlers that are on ``PUBLIC_API_PATHS`` but
+    must not do privileged work (e.g. enter a profile scope) for an anonymous caller (OBS-VULN-005)."""
+    if getattr(request.state, "token_authenticated", False):
+        return True
+    if getattr(request.app.state, "auth_required", False):
+        # Public paths skip the gate's verification, so look at the credentials ourselves.
+        from hermes_cli.dashboard_auth.middleware import resolve_optional_session
+        return resolve_optional_session(request) is not None
+    return _has_valid_session_token(request)
+
+
 # Accepted Host values for loopback binds. DNS rebinding TTL-flips an attacker
 # hostname to 127.0.0.1 so the browser treats it as same-origin; validating Host
 # at the app layer rejects it. See GHSA-ppp5-vxwm-4cf7.

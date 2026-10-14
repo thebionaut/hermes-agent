@@ -43,6 +43,7 @@ _dashboard_local_update_managed_externally = late("_dashboard_local_update_manag
 _load_configured_gateway_platforms = late("_load_configured_gateway_platforms", "hermes_cli.web_server_gateway")
 _probe_gateway_health = late("_probe_gateway_health", "hermes_cli.web_server_gateway")
 _require_token = late("_require_token")
+_request_is_authenticated = late("_request_is_authenticated")
 _resolve_profile_dir = late("_resolve_profile_dir", "hermes_cli.web_server_profiles")
 _resolve_restart_drain_timeout = late("_resolve_restart_drain_timeout", "hermes_cli.web_server_lifecycle")
 _spawn_hermes_action = late("_spawn_hermes_action", "hermes_cli.web_server_gateway")
@@ -464,7 +465,7 @@ async def _advisory_pressure(status: dict[str, Any], home: Path) -> None:
 
 
 @router.get("/api/status")
-async def get_status(profile: Optional[str] = None):
+async def get_status(request: Request, profile: Optional[str] = None):
     """Public machine-level liveness probe (``PUBLIC_API_PATHS``): version, gateway state,
     active session count and the auth-gate shape — no bodies, no session content, no secrets.
 
@@ -474,6 +475,11 @@ async def get_status(profile: Optional[str] = None):
     """
     from hermes_cli.web_server import _GATEWAY_HEALTH_URL
     status_scope = None
+    # OBS-VULN-005: this route is public, so an anonymous caller must never reach profile scope
+    # (profile-existence oracle, per-profile gateway state, scope-swap contention). Serve the
+    # machine-level probe instead; only an authenticated caller may select a profile.
+    if profile and not _request_is_authenticated(request):
+        profile = None
     requested_profile = (profile or "").strip()
     profile_dir: Optional[Path] = None
     if requested_profile and requested_profile.lower() != "current":

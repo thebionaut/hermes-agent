@@ -217,6 +217,30 @@ async def gated_auth_middleware(
     return response
 
 
+def resolve_optional_session(request: Request):
+    """Best-effort credential check for handlers on ``PUBLIC_API_PATHS``.
+
+    :func:`gated_auth_middleware` skips verification on public paths, so ``request.state.session``
+    is ``None`` there even for a logged-in caller. A public handler that must still tell anonymous
+    from authenticated (OBS-VULN-005: profile scope) calls this: bearer first, then the access-token
+    cookie. Never refreshes, never redirects, never raises: unreachable provider / bad token => ``None``
+    (fail closed, i.e. treated as anonymous)."""
+    existing = getattr(request.state, "session", None)
+    if existing is not None:
+        return existing
+    try:
+        bearer = _extract_bearer(request)
+        if bearer:
+            return _verify_access_token(request, access_token=bearer, audit=False)
+        at, _rt = read_session_cookies(request)
+        if at:
+            return _verify_access_token(request, access_token=at,
+                                        provider_hint=read_session_provider(request), audit=False)
+    except Exception:  # ProviderError or anything else: anonymous
+        return None
+    return None
+
+
 def _attempt_refresh(request: Request, *, refresh_token, provider_hint: str | None = None):
     """Rotate an expired session via the refresh token; ``(Session, provider_name)`` or ``None``.
     Concurrent requests carrying the same stale RT are coalesced (``refresh_singleflight``): a
